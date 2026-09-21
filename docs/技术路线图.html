@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN" style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>胸部X光多标签病变分类 · 参赛技术路线图</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: "Microsoft YaHei","PingFang SC",-apple-system,sans-serif; margin:0; padding:28px;
+         background:#f4f7fa; color:#1f2d3d; line-height:1.55; }
+  .wrap { max-width:1180px; margin:0 auto; }
+  h1 { font-size:26px; margin:0 0 4px; color:#0b3a53; }
+  .sub { color:#5a6b7b; font-size:14px; margin-bottom:24px; }
+  h2 { font-size:18px; margin:30px 0 14px; padding-left:11px; border-left:5px solid #0e7490; color:#0b3a53; }
+  .note { font-size:12.5px; color:#7a8a99; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:18px 20px;
+          box-shadow:0 1px 3px rgba(15,40,60,.05); margin-bottom:8px; }
+
+  /* pipeline */
+  .pipe { display:flex; align-items:stretch; gap:0; flex-wrap:wrap; }
+  .stage { flex:1 1 130px; min-width:130px; background:#f8fbfd; border:1px solid #d7e4ec; border-radius:10px;
+           padding:12px 12px 10px; position:relative; }
+  .stage .num { width:22px;height:22px;border-radius:50%;background:#0e7490;color:#fff;font-size:12px;
+                display:flex;align-items:center;justify-content:center;font-weight:bold;margin-bottom:7px;}
+  .stage b { font-size:13.5px; color:#0b3a53; display:block; margin-bottom:5px; }
+  .stage span { font-size:12px; color:#546575; display:block; }
+  .arrow { display:flex;align-items:center;color:#9fb6c4;font-size:20px;padding:0 5px;flex:0 0 auto;}
+  @media(max-width:860px){ .arrow{transform:rotate(90deg);padding:4px 0;} .stage{flex:1 1 45%;} }
+
+  /* 方案三档 */
+  .tiers { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  .tier { border-radius:11px; padding:15px 16px; border:1px solid; }
+  .tier .tag { font-size:12px;font-weight:bold;letter-spacing:1px;margin-bottom:6px;}
+  .tier h3 { margin:0 0 8px; font-size:15.5px;}
+  .tier ul { margin:0; padding-left:17px; font-size:12.8px; }
+  .tier li { margin-bottom:4px; }
+  .tier .auc { margin-top:10px; font-size:12.5px; font-weight:bold; }
+  .t1 { background:#f1f8f6; border-color:#bfe0d6; } .t1 .tag{color:#157f63;} .t1 .auc{color:#157f63;}
+  .t2 { background:#eff6fb; border-color:#bcd9ee; } .t2 .tag{color:#0b63a0;} .t2 .auc{color:#0b63a0;}
+  .t3 { background:#fdf6ec; border-color:#f0d9b5; } .t3 .tag{color:#b7791f;} .t3 .auc{color:#b7791f;}
+
+  /* 提分阶梯 */
+  .ladder { display:flex; flex-direction:column; gap:8px; }
+  .rung { display:flex; align-items:center; gap:14px; background:#f8fbfd; border:1px solid #dce6ed;
+          border-radius:9px; padding:9px 14px; }
+  .rung .pri { flex:0 0 34px; height:34px; border-radius:8px; background:#0e7490; color:#fff; font-weight:bold;
+               display:flex;align-items:center;justify-content:center;font-size:14px;}
+  .rung .main { flex:1; } .rung .main b{ font-size:13.8px;color:#0b3a53;} .rung .main span{font-size:12.3px;color:#5a6b7b;margin-left:8px;}
+  .rung .gain { flex:0 0 120px; text-align:right; font-size:12.3px; color:#157f63; font-weight:bold;}
+
+  /* 时间线 */
+  .tl { display:flex; gap:0; position:relative; margin-top:8px; flex-wrap:wrap;}
+  .tl::before { content:""; position:absolute; top:13px; left:1%; right:1%; height:3px; background:#cfe0ea; }
+  .tl .node { flex:1; min-width:150px; position:relative; padding-top:32px; padding-right:10px;}
+  .tl .dot { position:absolute; top:6px; left:0; width:17px;height:17px;border-radius:50%;background:#0e7490;
+             border:3px solid #fff; box-shadow:0 0 0 2px #0e7490;}
+  .tl .d { font-size:12px; color:#0b63a0; font-weight:bold; }
+  .tl .t { font-size:12.6px; color:#33475b; margin-top:3px;}
+  .tl .node.milestone .dot{ background:#c0504d; box-shadow:0 0 0 2px #c0504d;}
+  .tl .node.milestone .d{ color:#c0504d;}
+
+  /* 约束 */
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .box { border-radius:10px; padding:13px 16px; font-size:13px; }
+  .box.ok { background:#f1f8f6; border:1px solid #bfe0d6; }
+  .box.no { background:#fdf1f0; border:1px solid #f0c8c5; }
+  .box h4 { margin:0 0 8px; font-size:13.5px;}
+  .box ul{margin:0;padding-left:18px;} .box li{margin-bottom:4px;}
+  code { background:#eef3f7; padding:1px 5px; border-radius:4px; font-size:12px; color:#0b5a78;}
+  @media(max-width:760px){ .tiers,.grid2{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>胸部 X 光多标签病变分类 · 参赛技术路线图</h1>
+  <div class="sub">2026 第八届全国高校计算机能力挑战赛 · 人工智能挑战赛 ｜ 数据 10-15 开放 ｜ 区域赛截止 11-13（基于往届规程与 ChestX-ray14 基准，最终以官方发布为准）</div>
+
+  <h2>一、端到端流程</h2>
+  <div class="card">
+    <div class="pipe">
+      <div class="stage"><div class="num">1</div><b>数据对齐</b><span>核对类别/字段/指标；转统一 csv；按患者划分防泄漏</span></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="num">2</div><b>预处理</b><span>灰度转三通道、缩放、ImageNet 归一化；可选 CLAHE</span></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="num">3</div><b>保守增强</b><span>水平翻转、小角度旋转、轻微缩放/亮度对比</span></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="num">4</div><b>多标签模型</b><span>timm backbone + sigmoid 多头（非 softmax）</span></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="num">5</div><b>长尾损失</b><span>ASL 非对称损失 / 加权 BCE + 标签平滑</span></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="num">6</div><b>验证选优</b><span>mAUC/mAP/F1；EMA；每类阈值搜索；TTA</span></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="num">7</div><b>集成提交</b><span>异构/多折概率平均；离线打包 run.py + 权重</span></div>
+    </div>
+  </div>
+
+  <h2>二、三档方案（按算力与目标选择）</h2>
+  <div class="tiers">
+    <div class="tier t1">
+      <div class="tag">BASELINE · 必做保底</div>
+      <h3>DenseNet121 / ResNet50</h3>
+      <ul>
+        <li>ImageNet 预训练，224 输入</li>
+        <li>BCEWithLogits 损失</li>
+        <li>跑通训练→验证→打包全链路</li>
+      </ul>
+      <div class="auc">参考 mAUC ≈ 0.80–0.83</div>
+    </div>
+    <div class="tier t2">
+      <div class="tag">主力 · 推荐冲奖</div>
+      <h3>ConvNeXt-T / Swin-T / EfficientNetV2</h3>
+      <ul>
+        <li>320 输入，ASL 损失 + 阳性率权重</li>
+        <li>EMA + 每类阈值 + 翻转 TTA</li>
+        <li>5 折 × 2–3 个异构 backbone 集成</li>
+      </ul>
+      <div class="auc">参考 mAUC ≈ 0.84–0.87</div>
+    </div>
+    <div class="tier t3">
+      <div class="tag">进阶 · 冲前三</div>
+      <h3>医学预训练 + 高分辨率</h3>
+      <ul>
+        <li>RadImageNet / BioViL 领域权重</li>
+        <li>384 微调、知识蒸馏</li>
+        <li>域随机化增强提升跨设备鲁棒性</li>
+      </ul>
+      <div class="auc">参考 mAUC ≈ 0.87+</div>
+    </div>
+  </div>
+
+  <h2>三、提分杠杆（按性价比从高到低）</h2>
+  <div class="card">
+    <div class="ladder">
+      <div class="rung"><div class="pri">1</div><div class="main"><b>严格按患者划分训练/验证</b><span>同一患者片子整体进同一折，杜绝指标虚高</span></div><div class="gain">前提性，不做全崩</div></div>
+      <div class="rung"><div class="pri">2</div><div class="main"><b>长尾损失 ASL / 加权 BCE</b><span>压制海量易负样本，救稀有病类别</span></div><div class="gain">稀有类 AUC +2~5</div></div>
+      <div class="rung"><div class="pri">3</div><div class="main"><b>每类阈值搜索</b><span>验证集上逐类选最优阈值（影响 F1，不影响 AUC）</span></div><div class="gain">macro-F1 +2~5</div></div>
+      <div class="rung"><div class="pri">4</div><div class="main"><b>EMA + 水平翻转 TTA</b><span>权重滑动平均 + 测试时增强，几乎无风险</span></div><div class="gain">+0.3~0.8</div></div>
+      <div class="rung"><div class="pri">5</div><div class="main"><b>异构模型概率平均集成</b><span>CNN 与 Transformer 错误互补</span></div><div class="gain">+0.5~1.0</div></div>
+      <div class="rung"><div class="pri">6</div><div class="main"><b>分辨率 224→320/384 微调</b><span>结节/纤维化等小目标纹理收益明显</span></div><div class="gain">小结节类 +1~3</div></div>
+      <div class="rung"><div class="pri">7</div><div class="main"><b>医学领域预训练权重</b><span>用放射影像预训练替换 ImageNet 权重</span></div><div class="gain">+0.3~1.0</div></div>
+    </div>
+  </div>
+
+  <h2>四、倒排时间线</h2>
+  <div class="card">
+    <div class="tl">
+      <div class="node"><div class="dot"></div><div class="d">现在 ~ 10/14</div><div class="t">搭环境、公开 ChestX-ray14 跑通 baseline、读论文</div></div>
+      <div class="node milestone"><div class="dot"></div><div class="d">10/15 数据开放</div><div class="t">对齐官方格式/指标，建可靠验证集，出首个分数</div></div>
+      <div class="node"><div class="dot"></div><div class="d">10/22 ~ 11/02</div><div class="t">主力模型、长尾损失、EMA、阈值、TTA、错误分析</div></div>
+      <div class="node"><div class="dot"></div><div class="d">11/03 ~ 11/09</div><div class="t">5 折 + 异构集成、高分辨率微调、写技术报告</div></div>
+      <div class="node milestone"><div class="dot"></div><div class="d">11/13 截止</div><div class="t">冻结模型，断网实测 run.py，提前 1 天提交</div></div>
+      <div class="node"><div class="dot"></div><div class="d">11/19 ~ 11/24</div><div class="t">国赛：隐藏测试/限时重训，保证一键复现</div></div>
+    </div>
+  </div>
+
+  <h2>五、提交硬约束（往届规程，今年以官方为准）</h2>
+  <div class="grid2">
+    <div class="box ok">
+      <h4>✔ 必须做到</h4>
+      <ul>
+        <li>zip 内固定结构：<code>run.py</code> + <code>requirements.txt</code> + 权重 + 代码</li>
+        <li>权重本地加载（<code>pretrained=False</code>），<b>断网可跑</b></li>
+        <li>权重+代码总体积 <b>≤ 2GB</b>，依赖锁版本兼容 Python 3.8</li>
+        <li>损坏图/单通道/16 位图有兜底，体现鲁棒性</li>
+        <li>用预训练权重须有自己的训练/改进工作量并写进报告</li>
+      </ul>
+    </div>
+    <div class="box no">
+      <h4>✘ 禁止 / 易踩坑</h4>
+      <ul>
+        <li>禁止联网 API 大模型、禁止测试集信息泄漏</li>
+        <li>不要用 softmax + 单分类交叉熵（任务是多标签）</li>
+        <li>不要随机按图片划分（必须按患者分组）</li>
+        <li>不要拿每天仅 1 次的提交机会做调试</li>
+        <li>不要只看总分，务必看<b>每类 AUC</b>（长尾类定胜负）</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note" style="margin-top:12px;">说明：mAUC 数值为 ChestX-ray14 公开基准上的参考区间，实际取决于官方数据与划分；指标口径（mAUC/mAP/F1）与提交接口以 10-15 官方发布的赛题说明和 submit_example 为准。</div>
+</div>
+</body>
+</html>

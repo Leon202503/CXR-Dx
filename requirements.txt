@@ -1,0 +1,11 @@
+# 训练/开发环境（本地 GPU）。提交用 requirements 见 predict/requirements.txt
+torch>=2.1,<3.0
+torchvision>=0.16
+timm>=0.9.16
+numpy>=1.24,<2.0
+pandas>=2.0
+scikit-learn>=1.3
+PyYAML>=6.0
+opencv-python>=4.8
+Pillow>=10.0
+tqdm>=4.66

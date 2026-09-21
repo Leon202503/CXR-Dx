@@ -1,0 +1,10 @@
+# 提交环境依赖（官方镜像 Python 3.8 + CUDA 11.3/12.1，以实际上线为准）
+# 注意：官方推理镜像通常已预装 torch/torchvision，若已预装请删除下面两行，
+#       避免 pip 拉取不兼容版本；保留其余轻量依赖即可。
+torch>=2.0,<2.5
+torchvision>=0.15
+timm>=0.9.16,<1.1
+numpy>=1.23,<2.0
+pandas>=1.5,<2.3
+Pillow>=9.0
+opencv-python-headless>=4.8

@@ -1,0 +1,86 @@
+# ============================================================
+# 胸部 X 光多标签分类配置 —— 官方数据发布后主要修改本文件
+# ============================================================
+
+# ---------- 数据 ----------
+data:
+  # prepare_data.py 生成的统一标注 csv（列：image_path, labels(多热0/1字符串), patient_id）
+  train_csv: "data_csv/train.csv"
+  val_csv: "data_csv/val.csv"          # 没有则按 patient 五折自动划分
+  image_root: "D:/data/ChestX-ray14/images"   # 图片根目录（csv 中为相对路径）
+  # 官方标注若是 ChestX-ray14 原生格式（Finding Labels 用 | 分隔），prepare_data.py 会转换
+  num_workers: 8
+
+# ---------- 类别 ----------
+# ChestX-ray14 标准 14 类；官方若不同，按官方顺序改这里（顺序必须与标注/提交列一致）
+class_names:
+  - Atelectasis
+  - Cardiomegaly
+  - Effusion
+  - Infiltration
+  - Mass
+  - Nodule
+  - Pneumonia
+  - Pneumothorax
+  - Consolidation
+  - Edema
+  - Emphysema
+  - Fibrosis
+  - Pleural_Thickening
+  - Hernia
+# 若数据含 "No Finding" 且官方要求输出，置 true（通常 14 类任务不输出它）
+include_no_finding: false
+
+# ---------- 模型 ----------
+model:
+  backbone: "densenet121"   # 可选: densenet121 / resnet50 / convnext_tiny / efficientnetv2_s / swin_tiny_patch4_window7_224
+  pretrained: true         # 训练时下载 ImageNet 权重；提交时务必用本地权重、run.py 中置 false
+  drop_rate: 0.2
+
+# ---------- 训练 ----------
+train:
+  img_size: 224            # 224 起步；主力 320；后期 384 微调
+  epochs: 25
+  batch_size: 32
+  lr: 0.0002
+  weight_decay: 0.01
+  optimizer: "adamw"
+  scheduler: "cosine"      # cosine + warmup
+  warmup_epochs: 2
+  label_smoothing: 0.01    # 正负标签双向平滑，抗 NLP 噪声标签
+  amp: true                # 混合精度
+  ema: true                # 权重滑动平均
+  ema_decay: 0.9997
+  loss: "asl"              # bce / weighted_bce / focal / asl
+  asl_gamma_neg: 4.0
+  asl_gamma_pos: 0.0
+  asl_clip: 0.05
+  focal_gamma: 2.0
+  pos_weight_cap: 10.0     # weighted_bce 阳性权重上限，防长尾类权重爆炸
+  early_stop_patience: 6
+
+# ---------- 数据增强（针对医学影像的保守增强） ----------
+aug:
+  hflip: true
+  rotate_deg: 7            # 小角度，避免解剖结构错位
+  scale_ratio: 0.1
+  brightness: 0.1
+  contrast: 0.1
+  clahe: false             # CLAHE 直方图均衡（可做对比实验，对部分设备域有效）
+  clahe_clip: 2.0
+
+# ---------- 验证 / 推理 ----------
+eval:
+  monitor: "mAUC"          # 按 mAUC 选最优；官方若以 mAP/F1 排名则改这里
+  search_threshold: true   # 在验证集为每类搜索最佳阈值，导出 thresholds.json
+  tta: true                # 水平翻转 TTA
+
+# ---------- 五折（按 patient_id 分组，防泄漏） ----------
+split:
+  n_folds: 5
+  fold: 0
+  seed: 42
+
+# ---------- 输出 ----------
+output:
+  dir: "runs"

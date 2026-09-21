@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.conda/
+
+# 数据与训练产物（不要提交到 git / 不要打进提交包）
+data_csv/
+*.pth
+*.pt
+runs/
+predict/weights/*.pth
+.preview/
+
+# 数据本体（ChestX-ray14 几十 GB，自行管理路径）
+*.zip
+D:/data/
