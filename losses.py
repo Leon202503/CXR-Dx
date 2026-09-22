@@ -36,14 +36,15 @@ class AsymmetricLoss(nn.Module):
         self.eps = eps
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        probs = logits.sigmoid()
-        # 概率截断：把容易负样本的概率压到 clip 以下后直接"扔掉"
+        # FP32 避免混合精度下 log(0)，正分支保持梯度。
+        probs = logits.float().sigmoid()
+        neg_probs = 1 - probs
         if self.clip is not None and self.clip > 0:
-            probs = torch.clamp(probs, min=self.clip, max=1.0)
+            neg_probs = (neg_probs + self.clip).clamp(max=1.0)
         log_pos = torch.log(probs.clamp(min=self.eps))
-        log_neg = torch.log((1 - probs).clamp(min=self.eps))
+        log_neg = torch.log(neg_probs.clamp(min=self.eps))
         loss_pos = targets * ((1 - probs) ** self.gamma_pos) * log_pos
-        loss_neg = (1 - targets) * (probs ** self.gamma_neg) * log_neg
+        loss_neg = (1 - targets) * ((1 - neg_probs) ** self.gamma_neg) * log_neg
         return -(loss_pos + loss_neg).mean()
 
 

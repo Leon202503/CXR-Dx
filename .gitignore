@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .conda/
+.venv/
+artifacts/
 
 # 数据与训练产物（不要提交到 git / 不要打进提交包）
 data_csv/

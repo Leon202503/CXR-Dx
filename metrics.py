@@ -22,20 +22,20 @@ def per_class_ap(probs: np.ndarray, labels: np.ndarray):
     c = labels.shape[1]
     aps = np.full(c, np.nan)
     for j in range(c):
-        if labels[:, j].min() != labels[:, j].max():
+        if labels[:, j].sum() > 0:
             aps[j] = average_precision_score(labels[:, j], probs[:, j])
     return aps
 
 
 def macro_mean(arr: np.ndarray) -> float:
-    return float(np.nanmean(arr))
+    return float(np.nanmean(arr)) if np.isfinite(arr).any() else float("nan")
 
 
 def search_per_class_thresholds(probs: np.ndarray, labels: np.ndarray,
                                 grid=None) -> np.ndarray:
     """为每个类别搜索使该类 F1 最大的阈值。"""
     if grid is None:
-        grid = np.linspace(0.05, 0.95, 19)
+        grid = np.linspace(0.01, 0.99, 99)
     c = labels.shape[1]
     best = np.full(c, 0.5)
     for j in range(c):
@@ -48,17 +48,28 @@ def search_per_class_thresholds(probs: np.ndarray, labels: np.ndarray,
 
 def evaluate_all(probs: np.ndarray, labels: np.ndarray, class_names, thresholds: np.ndarray | None = None):
     """返回汇总 dict 与每类明细 dict。"""
+    probs, labels = np.asarray(probs), np.asarray(labels)
+    if probs.ndim != 2 or probs.shape != labels.shape or len(probs) == 0 or probs.shape[1] != len(class_names):
+        raise ValueError("概率/标签维度不一致或为空")
+    if not np.isfinite(probs).all() or ((probs < 0) | (probs > 1)).any() or not np.isin(labels, [0, 1]).all():
+        raise ValueError("概率或标签非法")
     aucs = per_class_auc(probs, labels)
     aps = per_class_ap(probs, labels)
     if thresholds is None:
         thresholds = search_per_class_thresholds(probs, labels)
+    thresholds = np.asarray(thresholds)
+    if thresholds.shape != (labels.shape[1],) or not np.isfinite(thresholds).all():
+        raise ValueError("阈值维度或数值非法")
     preds = (probs >= thresholds).astype(int)
     f1s = np.full(labels.shape[1], np.nan)
     for j in range(labels.shape[1]):
-        if labels[:, j].min() != labels[:, j].max():
-            f1s[j] = f1_score(labels[:, j], preds[:, j], zero_division=0)
+        # F1 按全部类别统计，缺阳性类别使用 zero_division=0。
+        f1s[j] = f1_score(labels[:, j], preds[:, j], zero_division=0)
     summary = {
         "mAUC": macro_mean(aucs),
+        "valid_auc_classes": int(np.isfinite(aucs).sum()),
+        "valid_ap_classes": int(np.isfinite(aps).sum()),
+        "num_classes": len(class_names),
         "mAP": macro_mean(aps),
         "macro_F1": macro_mean(f1s),
         "micro_F1@thr": float(f1_score(labels, preds, average="micro", zero_division=0)),
@@ -70,5 +81,6 @@ def evaluate_all(probs: np.ndarray, labels: np.ndarray, class_names, thresholds:
         "F1": [round(float(x), 4) if not np.isnan(x) else None for x in f1s],
         "threshold": [round(float(x), 3) for x in thresholds],
         "pos_rate": [round(float(x), 4) for x in labels.mean(axis=0)],
+        "positive_count": labels.sum(axis=0).astype(int).tolist(),
     }
     return summary, detail

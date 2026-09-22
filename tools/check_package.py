@@ -1,88 +1,85 @@
-"""提交前自检：目录结构、2GB 体积限制、权重完整性，并可断网冒烟测试 run.py。
-
-用法：
-    python tools/check_package.py --model_dir predict
-    python tools/check_package.py --model_dir predict --smoke   # 生成假图实际跑一遍推理
-"""
-from __future__ import annotations
-
+"""提交包结构、元数据、体积和禁止 Python socket 联网的独立进程冒烟检查。"""
 import argparse
+import json
 import os
+from pathlib import Path
+import subprocess
 import sys
 import tempfile
 
-LIMIT_BYTES = 2 * 1024 ** 3
-
-
-def dir_size(root: str) -> int:
-    total = 0
-    for dp, _, fns in os.walk(root):
-        for f in fns:
-            total += os.path.getsize(os.path.join(dp, f))
-    return total
+SMOKE = r'''
+import socket
+def blocked(*args, **kwargs):
+    raise RuntimeError("离线检查禁止网络访问")
+socket.socket.connect = blocked
+socket.socket.connect_ex = blocked
+socket.create_connection = blocked
+import sys
+from pathlib import Path
+import numpy as np
+import pandas as pd
+from PIL import Image
+import torch
+torch.set_num_threads(2)
+import run
+root = Path(sys.argv[1])
+rows = []
+for i in range(3):
+    path = root / (str(i) + ".png")
+    array = np.arange(4096, dtype=np.uint16).reshape(64,64) if i == 0 else np.full((64,64), i * 80, dtype=np.uint8)
+    Image.fromarray(array).save(path)
+    rows.append({"id": "00" + str(i), "image": path.name})
+pd.DataFrame(rows).to_csv(root / "test.csv", index=False)
+out = run.predict(root / "test.csv", root / "result.csv", batch_size=2, device="cpu")
+assert out["id"].tolist() == ["000","001","002"]
+weights = sorted((Path(run.__file__).parent / "weights").glob("*.pth"))
+meta = torch.load(weights[0], map_location="cpu", weights_only=True)
+assert out.columns.tolist() == ["id"] + meta["class_names"]
+values = out.iloc[:,1:].to_numpy()
+assert values.shape == (3, len(meta["class_names"]))
+assert np.isfinite(values).all() and (values >= 0).all() and (values <= 1).all()
+print("独立进程离线推理通过：RGB/灰度16位输入、ID顺序、输出范围和形状")
+'''
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_dir", default="predict")
-    ap.add_argument("--smoke", action="store_true", help="用随机假图断网跑一遍 run.predict")
+    ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--max_mb", type=float, default=2048, help="工程默认预算，正式限制以官方为准")
+    ap.add_argument("--allow_debug", action="store_true", help="仅开发自测，允许调试权重")
     args = ap.parse_args()
-    root = args.model_dir
-    ok = True
-
-    def check(cond, msg):
-        nonlocal ok
-        print(("[PASS] " if cond else "[FAIL] ") + msg)
-        ok = ok and cond
-
-    check(os.path.isfile(os.path.join(root, "run.py")), "存在 run.py")
-    check(os.path.isfile(os.path.join(root, "requirements.txt")), "存在 requirements.txt")
-    weights = [os.path.join(dp, f) for dp, _, fns in os.walk(root) for f in fns if f.endswith((".pth", ".pt"))]
-    check(len(weights) > 0, f"至少 1 个权重文件（当前 {len(weights)} 个）")
-
-    size = dir_size(root)
-    print(f"[INFO] 总体积：{size / 1024 ** 2:.1f} MB（限制 2048 MB）")
-    check(size <= LIMIT_BYTES, "总体积 ≤ 2GB")
-
-    # 权重内容检查
-    try:
-        import torch
-        for w in weights:
-            ckpt = torch.load(w, map_location="cpu", weights_only=False)
-            need = ["state_dict", "backbone", "class_names", "img_size", "thresholds"]
-            miss = [k for k in need if k not in ckpt]
-            check(not miss, f"{os.path.basename(w)} 字段完整（缺：{miss}）")
-    except ImportError:
-        print("[WARN] 本地未装 torch，跳过权重内容检查")
-
-    # 断网冒烟测试
+    root = Path(args.model_dir).resolve()
+    for name in ("run.py", "runtime.py", "requirements.txt"):
+        if not (root / name).is_file():
+            raise FileNotFoundError(name)
+    weights = sorted((root / "weights").glob("*.pth"))
+    if not weights:
+        raise ValueError("weights/ 下没有 .pth 权重")
+    size = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+    if size > args.max_mb * 1024 ** 2:
+        raise ValueError("超过配置的提交体积预算")
+    import torch
+    names = None
+    for path in weights:
+        meta = torch.load(path, map_location="cpu", weights_only=True)
+        required = {"state_dict", "backbone", "class_names", "img_size", "thresholds", "preprocess_version"}
+        if required - meta.keys():
+            raise ValueError(f"{path}: 缺少字段 {required - meta.keys()}")
+        if meta.get("debug") and not args.allow_debug:
+            raise ValueError("调试权重禁止作为正式提交，请完成正式训练")
+        if names is not None and names != meta["class_names"]:
+            raise ValueError("集成类别顺序不一致")
+        names = meta["class_names"]
     if args.smoke:
-        try:
-            import numpy as np
-            import pandas as pd
-            from PIL import Image
-            sys.path.insert(0, os.path.abspath(root))
-            import run as submission
-            with tempfile.TemporaryDirectory() as td:
-                img_dir = os.path.join(td, "images")
-                os.makedirs(img_dir)
-                rows = []
-                for i in range(6):
-                    p = os.path.join(img_dir, f"{i}.png")
-                    Image.fromarray(np.random.randint(0, 255, (256, 256), dtype=np.uint8)).convert("RGB").save(p)
-                    rows.append({"id": i, "image": f"images/{i}.png"})
-                csv_path = os.path.join(td, "test.csv")
-                pd.DataFrame(rows).to_csv(csv_path, index=False)
-                out_path = os.path.join(td, "result.csv")
-                submission.predict(td, out_path)
-                res = pd.read_csv(out_path)
-                check(len(res) == 6, f"冒烟测试：输出 6 行（实际 {len(res)} 行）")
-                check("id" in res.columns, "冒烟测试：输出含 id 列")
-        except Exception as e:
-            check(False, f"冒烟测试失败：{e}")
-
-    print("\n" + ("全部检查通过，可以打包 zip。" if ok else "存在未通过项，修复后再提交。"))
-    sys.exit(0 if ok else 1)
+        with tempfile.TemporaryDirectory() as temp:
+            env = os.environ.copy()
+            env["HF_HUB_OFFLINE"] = "1"
+            env["PYTHONIOENCODING"] = "utf-8"
+            subprocess.run([sys.executable, "-c", SMOKE, temp], cwd=root, env=env,
+                           check=True, timeout=300)
+    print(json.dumps({"weights": len(weights), "size_mb": round(size / 1024**2, 2),
+                      "smoke": args.smoke, "status": "passed"}))
 
 
 if __name__ == "__main__":

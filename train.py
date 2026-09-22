@@ -6,7 +6,7 @@
     python train.py --debug                      # 少量样本快速跑通流程
 
 产物（runs/<backbone>_f<fold>/）：
-    best.pth / last.pth / thresholds.json / config.yaml / metrics_history.json
+    best.pth / last.pth / thresholds.json / config_snapshot.yaml / metrics_history.json
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import argparse
 import copy
 import json
 import os
+import random
 import sys
 
 import numpy as np
@@ -21,7 +22,8 @@ import pandas as pd
 import torch
 import yaml
 from contextlib import nullcontext
-from sklearn.model_selection import GroupKFold
+from data.splits import make_splits, patient_hashes
+from predict.runtime import PREPROCESS_VERSION
 from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -44,7 +46,7 @@ except ImportError:  # 旧版 torch
         return _autocast(enabled=True) if enabled else nullcontext()
 
 
-# ---------------- EMA（权重滑动平均，几乎稳赚的提分点） ----------------
+# ---------------- EMA（效果需通过消融实验验证） ----------------
 class EMA:
     def __init__(self, model: torch.nn.Module, decay: float = 0.9997):
         self.decay = decay
@@ -62,6 +64,7 @@ class EMA:
 
 
 def set_seed(seed: int):
+    random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -69,26 +72,15 @@ def set_seed(seed: int):
 
 def load_cfg(path: str) -> dict:
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def make_splits(cfg: dict, fold: int):
-    """返回 train_df / val_df（统一格式 DataFrame）。优先用独立 val.csv，否则按患者五折。"""
-    dcfg = cfg["data"]
-    train_df = pd.read_csv(dcfg["train_csv"])
-    val_csv = dcfg.get("val_csv", "")
-    if val_csv and os.path.exists(val_csv):
-        return train_df, pd.read_csv(val_csv)
-
-    n_folds = cfg["split"]["n_folds"]
-    groups = train_df["patient_id"].astype(str).values if "patient_id" in train_df.columns \
-        else np.arange(len(train_df)).astype(str)
-    gkf = GroupKFold(n_splits=n_folds)
-    splits = list(gkf.split(train_df, groups=groups))
-    tr_idx, va_idx = splits[fold % n_folds]
-    print(f"[split] 按患者 GroupKFold：fold={fold}，train={len(tr_idx)}，val={len(va_idx)}，"
-          f"患者无交叉={len(set(groups[tr_idx]) & set(groups[va_idx])) == 0}")
-    return train_df.iloc[tr_idx].reset_index(drop=True), train_df.iloc[va_idx].reset_index(drop=True)
+        cfg = yaml.safe_load(f)
+    if not cfg.get("class_names") or len(set(cfg["class_names"])) != len(cfg["class_names"]):
+        raise ValueError("class_names 必须非空且唯一")
+    if cfg["train"].get("optimizer", "adamw") != "adamw" or cfg["train"].get("scheduler", "cosine") != "cosine":
+        raise ValueError("当前实现仅支持 adamw + cosine")
+    for key in ("batch_size", "epochs", "img_size", "lr"):
+        if cfg["train"][key] <= 0:
+            raise ValueError(f"train.{key} 必须为正")
+    return cfg
 
 
 @torch.no_grad()
@@ -113,7 +105,9 @@ def main():
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--loss", default=None)
     ap.add_argument("--fold", type=int, default=None)
-    ap.add_argument("--debug", action="store_true", help="200 张样本、2 epoch 跑通流程")
+    ap.add_argument("--no_pretrained", action="store_true", help="离线流程验证，随机初始化")
+    ap.add_argument("--run_name", default=None, help="自定义实验目录名，防止覆盖已有实验")
+    ap.add_argument("--debug", action="store_true", help="16 张训练/16 张验证，默认 2 epoch；仅检查流程")
     args = ap.parse_args()
 
     cfg = load_cfg(args.config)
@@ -122,6 +116,11 @@ def main():
     if args.batch_size: cfg["train"]["batch_size"] = args.batch_size
     if args.epochs: cfg["train"]["epochs"] = args.epochs
     if args.loss: cfg["train"]["loss"] = args.loss
+    if args.no_pretrained: cfg["model"]["pretrained"] = False
+    if args.debug and args.epochs is None: cfg["train"]["epochs"] = 2
+    if args.run_name and (os.path.basename(args.run_name) != args.run_name or args.run_name in (".", "..")):
+        raise ValueError("run_name 必须为单层目录名")
+    cfg["split"]["fold"] = args.fold if args.fold is not None else cfg["split"]["fold"]
     fold = args.fold if args.fold is not None else cfg["split"]["fold"]
     set_seed(cfg["split"]["seed"] + fold)
 
@@ -135,7 +134,7 @@ def main():
     # ---------- 数据 ----------
     train_df, val_df = make_splits(cfg, fold)
     if args.debug:
-        train_df, val_df = train_df.iloc[:200].reset_index(drop=True), val_df.iloc[:64].reset_index(drop=True)
+        train_df, val_df = train_df.iloc[:16].reset_index(drop=True), val_df.iloc[:16].reset_index(drop=True)
     aug_cfg = cfg.get("aug", {})
     train_ds = CXRDataset.from_df(
         train_df, class_names, cfg["data"]["image_root"],
@@ -147,9 +146,9 @@ def main():
 
     nw = 0 if args.debug else cfg["data"].get("num_workers", 8)
     train_loader = DataLoader(train_ds, batch_size=tcfg["batch_size"], shuffle=True,
-                              num_workers=nw, pin_memory=True, drop_last=True)
+                              num_workers=nw, pin_memory=device.type == "cuda", drop_last=False)
     val_loader = DataLoader(val_ds, batch_size=tcfg["batch_size"], shuffle=False,
-                            num_workers=nw, pin_memory=True)
+                            num_workers=nw, pin_memory=device.type == "cuda")
 
     # ---------- 模型 / 损失 / 优化器 ----------
     model = build_model(cfg).to(device)
@@ -159,7 +158,7 @@ def main():
     if tcfg["loss"] == "weighted_bce":
         print("[loss] 每类 pos_weight =", np.round(pos_weight.cpu().numpy(), 2))
 
-    epochs = 2 if args.debug else tcfg["epochs"]
+    epochs = tcfg["epochs"]
     opt = torch.optim.AdamW(model.parameters(), lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
     warmup = tcfg.get("warmup_epochs", 2)
     def lr_lambda(ep):
@@ -172,14 +171,25 @@ def main():
     ema = EMA(model, tcfg.get("ema_decay", 0.9997)) if tcfg.get("ema", True) else None
     ls = tcfg.get("label_smoothing", 0.0)
 
-    out_dir = os.path.join(cfg["output"]["dir"], f"{cfg['model']['backbone']}_f{fold}")
+    out_dir = os.path.join(cfg["output"]["dir"], args.run_name or f"{cfg['model']['backbone']}_f{fold}")
+    if os.path.exists(os.path.join(out_dir, "best.pth")) or os.path.exists(os.path.join(out_dir, "last.pth")):
+        raise FileExistsError("实验目录已有权重，请使用 --run_name 新建实验")
     os.makedirs(out_dir, exist_ok=True)
+    train_df.to_csv(os.path.join(out_dir, "train_split.csv"), index=False)
+    val_df.to_csv(os.path.join(out_dir, "val_split.csv"), index=False)
+    hashes = sorted(patient_hashes(train_df))
     monitor = cfg["eval"].get("monitor", "mAUC")
     best_score, history, bad = -1.0, [], 0
 
     def save_ckpt(path, eval_model, thresholds=None):
         torch.save({
             "state_dict": eval_model.state_dict(),
+            "preprocess_version": PREPROCESS_VERSION,
+            "train_patient_hashes": hashes,
+            "fold": fold, "epoch": ep, "seed": cfg["split"]["seed"],
+            "debug": args.debug,
+            "drop_rate": cfg["model"].get("drop_rate", 0.2),
+            "torch_version": str(torch.__version__),
             "backbone": cfg["model"]["backbone"],
             "class_names": class_names,
             "img_size": img_size,
@@ -198,11 +208,16 @@ def main():
             opt.zero_grad()
             with amp_autocast(tcfg.get("amp", True) and device.type == "cuda"):
                 logits = model(imgs)
-                loss = criterion(logits, targets)
+                loss = criterion(logits.float(), targets)
+            if not torch.isfinite(loss):
+                raise FloatingPointError("训练损失 NaN/Inf")
             scaler.scale(loss).backward()
+            scaler.unscale_(opt)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), tcfg.get("grad_clip", 5.0), error_if_nonfinite=True)
+            previous_scale = scaler.get_scale()
             scaler.step(opt)
             scaler.update()
-            if ema: ema.update(model)
+            if ema and scaler.get_scale() >= previous_scale: ema.update(model)
             losses.append(loss.item())
         scheduler.step()
 
@@ -217,9 +232,12 @@ def main():
               f"mAUC={summary['mAUC']:.4f} mAP={summary['mAP']:.4f} macroF1={summary['macro_F1']:.4f}")
 
         score = summary[monitor]
+        if not np.isfinite(score):
+            raise ValueError(f"{monitor} 无法计算，请检查验证集类别覆盖")
         if score > best_score:
             best_score, bad = score, 0
             save_ckpt(os.path.join(out_dir, "best.pth"), eval_model, thresholds)
+            np.savez_compressed(os.path.join(out_dir, "val_predictions.npz"), probs=probs, labels=labels, class_names=np.asarray(class_names))
             with open(os.path.join(out_dir, "thresholds.json"), "w", encoding="utf-8") as f:
                 json.dump({"class_names": class_names, "thresholds": thresholds.tolist(),
                            "detail": detail, "summary": summary}, f, ensure_ascii=False, indent=2)
@@ -230,7 +248,7 @@ def main():
                 print(f"[early stop] {monitor} 连续 {bad} 轮未提升")
                 break
 
-    save_ckpt(os.path.join(out_dir, "last.pth"), ema.shadow if ema else model)
+    save_ckpt(os.path.join(out_dir, "last.pth"), ema.shadow if ema else model, thresholds)
     with open(os.path.join(out_dir, "metrics_history.json"), "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
     with open(os.path.join(out_dir, "config_snapshot.yaml"), "w", encoding="utf-8") as f:

@@ -1,18 +1,12 @@
-# 权重放置目录
+# 模型权重
 
-把训练导出的权重放到这里，例如：
+正式训练完成后使用工具导出自包含提交包：
 
-```
-predict/
-  run.py
-  requirements.txt
-  weights/
-    densenet121_f0_best.pth
-    convnext_tiny_f0_best.pth    # 放多个权重会自动概率平均集成
+```powershell
+python tools/build_package.py --ckpt runs/densenet121_f0/best.pth --out artifacts/submission
+python tools/check_package.py --model_dir artifacts/submission --smoke
 ```
 
-注意：
-- `run.py` 启动时会自动加载本目录下全部 `*.pth`；
-- 权重 + 代码**总大小不得超过 2GB**；
-- 权重由 `train.py` 保存，内含 backbone 名、类别顺序、输入尺寸、CLAHE 开关和每类阈值，
-  因此提交包里不需要 yaml，也不会联网下载任何预训练权重。
+提交包包含 run.py、runtime.py、requirements.txt 和 weights/*.pth。多个模型必须使用完全一致的类别顺序及预处理版本。只放需要参与推理的权重，避免 best/last 重复集成。
+
+旧版工程权重缺少预处理版本与患者记录，需要重新训练。调试权重会被正式打包检查拒绝。

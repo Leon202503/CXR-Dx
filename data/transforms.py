@@ -16,16 +16,7 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
 
-class CLAHE:
-    """自适应直方图均衡（灰度图上做，再复制为 3 通道），对跨设备域差异有一定帮助。"""
-
-    def __init__(self, clip_limit: float = 2.0, tile_grid: int = 8):
-        self.clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile_grid, tile_grid))
-
-    def __call__(self, img: Image.Image) -> Image.Image:
-        arr = np.array(img.convert("L"))
-        arr = self.clahe.apply(arr)
-        return Image.fromarray(arr).convert("RGB")
+from predict.runtime import CLAHE, eval_transform
 
 
 class MaybeCLAHE:
@@ -60,12 +51,7 @@ def build_train_transforms(img_size: int = 224, aug_cfg: dict | None = None) -> 
 
 
 def build_eval_transforms(img_size: int = 224, clahe: bool = False, clip_limit: float = 2.0):
-    return transforms.Compose([
-        MaybeCLAHE(clahe, clip_limit),
-        transforms.Resize((img_size, img_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-    ])
+    return eval_transform(img_size, clahe, clip_limit)
 
 
 def build_tta_transforms(img_size: int = 224, clahe: bool = False, clip_limit: float = 2.0):

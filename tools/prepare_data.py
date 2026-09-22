@@ -18,16 +18,12 @@ import sys
 
 import numpy as np
 import pandas as pd
+import yaml
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from data.splits import patient_ids
 from data.dataset import load_labels, _find_column  # noqa: E402
-
-DEFAULT_CLASSES = [
-    "Atelectasis", "Cardiomegaly", "Effusion", "Infiltration", "Mass", "Nodule",
-    "Pneumonia", "Pneumothorax", "Consolidation", "Edema", "Emphysema", "Fibrosis",
-    "Pleural_Thickening", "Hernia",
-]
-
 
 def build_index(root: str) -> dict:
     """递归建立 文件名 -> 相对路径 的索引（ChestX-ray14 图片分散在 images_xxx/images/ 下）。"""
@@ -35,36 +31,42 @@ def build_index(root: str) -> dict:
     for dirpath, _, filenames in os.walk(root):
         for f in filenames:
             if f.lower().endswith((".png", ".jpg", ".jpeg")):
+                if f in index:
+                    raise ValueError(f"图片文件名重复，无法唯一索引: {f}")
                 index[f] = os.path.relpath(os.path.join(dirpath, f), root)
     return index
 
 
 def convert(df: pd.DataFrame, class_names, image_root: str = "", file_index: dict | None = None) -> pd.DataFrame:
-    labels, pids = load_labels(df, class_names)
+    labels, _ = load_labels(df, class_names)
+    pids = patient_ids(df)
     img_col = _find_column(df, ["image_path", "image", "img", "Image Index", "Image_Index", "file", "filename"])
     if img_col is None:
         raise ValueError(f"找不到图片列，实际列为 {list(df.columns)}")
 
-    paths, keep = [], []
-    for i, name in enumerate(df[img_col].astype(str)):
+    paths = []
+    for name in df[img_col].astype(str):
         base = os.path.basename(name)
         if file_index is not None:
             rel = file_index.get(base, name)
         else:
             rel = name
+        if image_root and not (Path(image_root) / rel).is_file():
+            raise FileNotFoundError(str(Path(image_root) / rel))
         paths.append(rel)
-        keep.append(i)
 
     out = pd.DataFrame({
         "image_path": paths,
         "labels": ["|".join(str(int(x)) for x in row) for row in labels],
-        "patient_id": pids if pids is not None else [f"p{i}" for i in range(len(df))],
+        "patient_id": pids,
     })
     return out
 
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default="configs/config.yaml")
+    ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--data_root", default="", help="ChestX-ray14 根目录")
     ap.add_argument("--csv", default="", help="或直接指定单个标注 csv")
     ap.add_argument("--image_root", default="", help="csv 模式下图片根目录")
@@ -73,6 +75,11 @@ def main():
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
+    with open(args.config, encoding="utf-8") as f:
+        classes = yaml.safe_load(f)["class_names"]
+    for name in (["train", "test"] if args.data_root else [args.out_name]):
+        if (Path(args.out) / (name + ".csv")).exists() and not args.overwrite:
+            raise FileExistsError("输出已存在；使用不同目录或显式 --overwrite")
 
     if args.data_root:
         root = args.data_root
@@ -84,7 +91,7 @@ def main():
         if entry is None:
             raise FileNotFoundError("未找到 Data_Entry_2017.csv")
         entry_dir = os.path.dirname(entry)
-        df_all = pd.read_csv(entry)
+        df_all = pd.read_csv(entry, dtype=str)
         file_index = build_index(root)
         print(f"索引到 {len(file_index)} 张图片")
 
@@ -101,23 +108,23 @@ def main():
 
         if train_val is not None:
             df_tv = df_all[df_all[img_col].isin(train_val)].reset_index(drop=True)
-            convert(df_tv, DEFAULT_CLASSES, root, file_index).to_csv(
+            convert(df_tv, classes, root, file_index).to_csv(
                 os.path.join(args.out, "train.csv"), index=False)
             print(f"train.csv: {len(df_tv)} 行")
         if test_list is not None:
             df_te = df_all[df_all[img_col].isin(test_list)].reset_index(drop=True)
-            convert(df_te, DEFAULT_CLASSES, root, file_index).to_csv(
-                os.path.join(args.out, "val.csv"), index=False)  # 官方 test_list 作为本地验证集
-            print(f"val.csv(官方test_list): {len(df_te)} 行")
+            convert(df_te, classes, root, file_index).to_csv(
+                os.path.join(args.out, "test.csv"), index=False)  # 保持独立测试集，不用于调参
+            print(f"test.csv(独立留出集): {len(df_te)} 行")
         if train_val is None and test_list is None:
-            convert(df_all, DEFAULT_CLASSES, root, file_index).to_csv(
+            convert(df_all, classes, root, file_index).to_csv(
                 os.path.join(args.out, "train.csv"), index=False)
-        print("类别顺序：", DEFAULT_CLASSES)
+        print("类别顺序：", classes)
     else:
         if not args.csv:
             ap.error("必须提供 --data_root 或 --csv")
-        df = pd.read_csv(args.csv)
-        out = convert(df, DEFAULT_CLASSES, args.image_root or None)
+        df = pd.read_csv(args.csv, dtype=str)
+        out = convert(df, classes, args.image_root or None)
         out_path = os.path.join(args.out, f"{args.out_name}.csv")
         out.to_csv(out_path, index=False)
         print(f"已写出 {out_path}: {len(out)} 行")
